@@ -14,7 +14,19 @@ class UdsSession:
         if sid==0x10:
             if len(request)!=2 or request[1] not in (1,2,3): return self._negative(sid,0x12)
             self.session=request[1]; return bytes([0x50,request[1],0,0x32])
-        if sid==0x3E: return bytes([0x7E,request[1] if len(request)>1 else 0])
+        if sid==0x3E:
+            # TesterPresent has exactly one subfunction byte.  Only the
+            # regular request (0x00) and the suppress-positive-response
+            # variant (0x80) are defined; accepting arbitrary values would
+            # make malformed diagnostics look successful.
+            if len(request) != 2:
+                return self._negative(sid,0x13)
+            if request[1] not in (0x00,0x80):
+                return self._negative(sid,0x12)
+            if request[1] == 0x80:
+                # UDS specifies no response when the suppression bit is set.
+                return b""
+            return bytes([0x7E,0x00])
         if sid==0x22:
             if len(request)!=3: return self._negative(sid,0x13)
             did=int.from_bytes(request[1:3],"big")
@@ -30,8 +42,21 @@ class UdsSession:
             if request[2:]!=expected: return bytes([0x7F,0x27,0x35])
             self.unlocked=True; return bytes([0x67,2])
         if sid==0x19:
-            payload=bytearray([0x59,2,len(self.dtcs)])
-            for code,status in self.dtcs: payload.extend(code.to_bytes(3,"big")); payload.append(status)
+            # ReportDTCByStatusMask (subfunction 0x02) has a three-byte
+            # request: service, subfunction, and status mask.  The third
+            # byte of the positive response is the status *availability*
+            # mask, not the number of DTCs.  The previous implementation
+            # returned a positive response for truncated or unsupported
+            # requests and put the DTC count in that protocol field.
+            if len(request) != 3:
+                return self._negative(sid,0x13)
+            if request[1] != 0x02:
+                return self._negative(sid,0x12)
+            status_mask=request[2]
+            payload=bytearray([0x59,0x02,0xFF])
+            for code,status in self.dtcs:
+                if status & status_mask:
+                    payload.extend(code.to_bytes(3,"big")); payload.append(status)
             return bytes(payload)
         return self._negative(sid,0x11)
 
