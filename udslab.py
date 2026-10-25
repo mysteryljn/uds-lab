@@ -13,7 +13,17 @@ class UdsSession:
         sid=request[0]
         if sid==0x10:
             if len(request)!=2 or request[1] not in (1,2,3): return self._negative(sid,0x12)
-            self.session=request[1]; return bytes([0x50,request[1],0,0x32])
+            self.session=request[1]
+            # A security seed is scoped to the active diagnostic session.  A
+            # session transition must invalidate both a pending seed and any
+            # unlock state so a key captured in one session cannot be replayed
+            # after switching to another session.
+            self.seed=None
+            self.unlocked=False
+            # Positive response includes both P2ServerMax (milliseconds)
+            # and P2*ServerMax (10-ms units).  Omitting P2* truncates the
+            # ISO 14229 response and leaves clients without a valid timeout.
+            return bytes([0x50, request[1], 0x00, 0x32, 0x01, 0xF4])
         if sid==0x3E:
             # TesterPresent has exactly one subfunction byte.  Only the
             # regular request (0x00) and the suppress-positive-response
