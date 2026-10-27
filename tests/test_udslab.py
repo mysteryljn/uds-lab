@@ -11,8 +11,29 @@ class UdsTests(unittest.TestCase):
         response = ecu.handle(bytes.fromhex("10 02"))
         self.assertEqual(len(response), 6)
         self.assertEqual(response, bytes.fromhex("50 02 00 32 01 F4"))
+
+    def test_session_control_honors_suppress_positive_response_bit(self):
+        ecu = UdsSession()
+        # 0x80 suppresses the positive response while the low seven bits
+        # still select the requested diagnostic session.
+        self.assertEqual(ecu.handle(bytes.fromhex("10 83")), b"")
+        self.assertEqual(ecu.session, 3)
+        # A suppressed transition still applies the same security-state
+        # invalidation as an ordinary session transition.
+        self.assertIsNone(ecu.seed)
+        self.assertFalse(ecu.unlocked)
     def test_security_access(self):
         ecu=UdsSession(); seed=ecu.handle(bytes.fromhex("27 01")); self.assertEqual(seed[:2],bytes.fromhex("67 01")); self.assertEqual(ecu.handle(bytes([0x27,2])+b"\0\0\0\0"),bytes.fromhex("7F 27 35")); self.assertFalse(ecu.unlocked)
+
+    def test_security_access_suppress_positive_response(self):
+        ecu = UdsSession()
+        # Suppression applies to the positive seed response, while the seed
+        # is still generated and retained for the following key request.
+        self.assertEqual(ecu.handle(bytes.fromhex("27 81")), b"")
+        self.assertIsNotNone(ecu.seed)
+        key = hashlib.sha256(ecu.seed + b"demo-key").digest()[:4]
+        self.assertEqual(ecu.handle(bytes([0x27, 0x82]) + key), b"")
+        self.assertTrue(ecu.unlocked)
 
     def test_session_change_invalidates_security_access_state(self):
         ecu = UdsSession()
