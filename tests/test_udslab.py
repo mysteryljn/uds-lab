@@ -25,6 +25,17 @@ class UdsTests(unittest.TestCase):
     def test_security_access(self):
         ecu=UdsSession(); seed=ecu.handle(bytes.fromhex("27 01")); self.assertEqual(seed[:2],bytes.fromhex("67 01")); self.assertEqual(ecu.handle(bytes([0x27,2])+b"\0\0\0\0"),bytes.fromhex("7F 27 35")); self.assertFalse(ecu.unlocked)
 
+    def test_security_access_rejects_malformed_key_length(self):
+        ecu = UdsSession()
+        ecu.handle(bytes.fromhex("27 01"))
+        # Once a seed has been issued, a key request still needs exactly four
+        # key bytes.  NRC 0x13 identifies the malformed request; NRC 0x35 is
+        # reserved for a correctly shaped but incorrect key.
+        self.assertEqual(
+            ecu.handle(bytes.fromhex("27 02 00 00 00")),
+            bytes.fromhex("7F 27 13"),
+        )
+
     def test_security_access_suppress_positive_response(self):
         ecu = UdsSession()
         # Suppression applies to the positive seed response, while the seed
@@ -34,6 +45,22 @@ class UdsTests(unittest.TestCase):
         key = hashlib.sha256(ecu.seed + b"demo-key").digest()[:4]
         self.assertEqual(ecu.handle(bytes([0x27, 0x82]) + key), b"")
         self.assertTrue(ecu.unlocked)
+
+    def test_security_access_seed_is_single_use(self):
+        ecu = UdsSession()
+        seed_response = ecu.handle(bytes.fromhex("27 01"))
+        key = hashlib.sha256(seed_response[2:] + b"demo-key").digest()[:4]
+        self.assertEqual(
+            ecu.handle(bytes([0x27, 0x02]) + key),
+            bytes.fromhex("67 02"),
+        )
+        # Replaying the same key must not be accepted after the challenge has
+        # been consumed; a fresh seed request is required.
+        self.assertEqual(
+            ecu.handle(bytes([0x27, 0x02]) + key),
+            bytes.fromhex("7F 27 35"),
+        )
+        self.assertIsNone(ecu.seed)
 
     def test_session_change_invalidates_security_access_state(self):
         ecu = UdsSession()

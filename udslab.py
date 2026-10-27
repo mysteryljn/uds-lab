@@ -69,10 +69,20 @@ class UdsSession:
                 if suppress_positive:
                     return b""
                 return bytes([0x67,1])+self.seed
-            if self.seed is None or len(request)!=6: return bytes([0x7F,0x27,0x35])
+            # Validate the request shape before checking the security state.
+            # A key request with a missing/extra byte is a malformed UDS
+            # request (NRC 0x13), regardless of whether a seed is pending;
+            # reporting invalidKey (0x35) for malformed input hides caller
+            # errors and can make a diagnostic client retry the wrong flow.
+            if len(request)!=6: return self._negative(sid,0x13)
+            if self.seed is None: return self._negative(sid,0x35)
             expected=hashlib.sha256(self.seed+b"demo-key").digest()[:4]
             if request[2:]!=expected: return bytes([0x7F,0x27,0x35])
             self.unlocked=True
+            # A seed is a one-time challenge.  Retaining it after a successful
+            # key check would let an attacker replay the same key request and
+            # receive another positive response without a fresh challenge.
+            self.seed=None
             if suppress_positive:
                 return b""
             return bytes([0x67,2])
