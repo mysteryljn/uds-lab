@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import hashlib
+import sys
 
 class UdsSession:
     def __init__(self):
@@ -9,6 +10,14 @@ class UdsSession:
         self.dtcs=[(0xC12345,1),(0xB10001,2)]
     def _negative(self,sid,nrc): return bytes([0x7F,sid,nrc])
     def handle(self,request):
+        # Transport adapters may hand malformed values to the simulator.  A
+        # non-byte request must produce the same controlled format error as an
+        # empty frame; otherwise a string (or a list containing non-byte
+        # values) can raise TypeError/ValueError in a service handler and take
+        # down the diagnostic loop.
+        if not isinstance(request, (bytes, bytearray, memoryview)):
+            return self._negative(0,0x13)
+        request=bytes(request)
         if not request: return self._negative(0,0x13)
         sid=request[0]
         if sid==0x10:
@@ -106,11 +115,21 @@ class UdsSession:
         return self._negative(sid,0x11)
 
 def parse_hex(parts):
-    try: return bytes(int(part,16) for part in parts)
-    except ValueError as exc: raise SystemExit(f"invalid hex byte: {exc}")
+    try:
+        return bytes(int(part,16) for part in parts)
+    except (TypeError, ValueError, OverflowError) as exc:
+        # Keep parsing usable as a library helper.  Raising SystemExit here
+        # made a caller embedding the lab unable to handle malformed tester
+        # input and bypassed the CLI's normal return-code contract.
+        raise ValueError(f"invalid hex byte: {exc}") from exc
 
 def main(argv=None):
     parser=argparse.ArgumentParser(description="Run a deterministic UDS request"); parser.add_argument("bytes",nargs="+"); args=parser.parse_args(argv)
-    response=UdsSession().handle(parse_hex(args.bytes)); print(" ".join(f"{byte:02x}" for byte in response)); return 0
+    try:
+        request = parse_hex(args.bytes)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    response=UdsSession().handle(request); print(" ".join(f"{byte:02x}" for byte in response)); return 0
 
 if __name__=="__main__": raise SystemExit(main())

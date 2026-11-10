@@ -1,6 +1,8 @@
 import hashlib
+import io
 import unittest
-from udslab import UdsSession
+from contextlib import redirect_stderr
+from udslab import UdsSession, main, parse_hex
 
 class UdsTests(unittest.TestCase):
     def test_session_and_read_data(self):
@@ -88,4 +90,24 @@ class UdsTests(unittest.TestCase):
         self.assertEqual(ecu.handle(bytes.fromhex("19")), bytes.fromhex("7F 19 13"))
         self.assertEqual(ecu.handle(bytes.fromhex("19 01 FF")), bytes.fromhex("7F 19 12"))
     def test_unknown_service(self): self.assertEqual(UdsSession().handle(bytes.fromhex("99")),bytes.fromhex("7F 99 11"))
+
+    def test_non_byte_requests_return_controlled_format_error(self):
+        # The simulator is fed by transport adapters, so malformed adapter
+        # values must not leak TypeError from a service response builder.
+        ecu = UdsSession()
+        self.assertEqual(ecu.handle("22 F1 90"), bytes.fromhex("7F 00 13"))
+        self.assertEqual(ecu.handle([0x22, 0xF1, 0x90]), bytes.fromhex("7F 00 13"))
+
+    def test_invalid_hex_is_reported_without_system_exit(self):
+        # Embedders should handle malformed tester input as a regular value
+        # error; the CLI maps it to its input-error return code instead of
+        # leaking SystemExit from the parser.
+        with self.assertRaises(ValueError):
+            parse_hex(["not-hex"])
+        stderr = io.StringIO()
+        with redirect_stderr(stderr):
+            result = main(["not-hex"])
+        self.assertEqual(result, 2)
+        self.assertIn("invalid hex byte", stderr.getvalue())
+
 if __name__=="__main__": unittest.main()
